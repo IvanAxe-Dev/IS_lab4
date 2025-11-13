@@ -15,7 +15,6 @@ class SudokuGUI:
         
         cell_colors = ["#FFFFFF", "#E8E8E8"]
         font_style_initial = ('Calibri', 18, 'bold')
-        font_style_solved = ('Calibri', 18)
         
         main_frame = tk.Frame(root, bd=3, relief="solid", bg="#333333")
         main_frame.pack(pady=20, padx=20)
@@ -134,51 +133,135 @@ class SudokuGUI:
                 return
             initial_copy[r][c] = num
 
-        if solve_sudoku(board):
+        solver = SudokuSolver(board)
+        if solver.solve():
+            solved_board = solver.board
             for row in range(9):
                 for col in range(9):
                     self.entries[(row, col)].delete(0, tk.END)
-                    self.entries[(row, col)].insert(0, str(board[row][col]))
+                    self.entries[(row, col)].insert(0, str(solved_board[row][col]))
                     if (row, col) not in self.initial_board:
                         self.entries[(row, col)].config(fg="#0000FF", font=('Calibri', 18))
         else:
             messagebox.showinfo("Result", "There is no solution for the sudoku :(")
 
-def solve_sudoku(board):
-    find = find_empty(board)
-    if not find:
-        return True
-    else:
-        row, col = find
-
-    for i in range(1, 10):
-        if is_valid(board, i, (row, col)):
-            board[row][col] = i
-            if solve_sudoku(board):
-                return True
-            board[row][col] = 0
-    return False
 
 def is_valid(board, num, pos):
-    for i in range(len(board[0])):
-        if board[pos[0]][i] == num and pos[1] != i:
+    row, col = pos
+    # Check row
+    for i in range(9):
+        if board[row][i] == num and i != col:
             return False
-    for i in range(len(board)):
-        if board[i][pos[1]] == num and pos[0] != i:
+    # Check column
+    for i in range(9):
+        if board[i][col] == num and i != row:
             return False
-    box_x, box_y = pos[1] // 3, pos[0] // 3
+    # Check box
+    box_x, box_y = col // 3, row // 3
     for i in range(box_y * 3, box_y * 3 + 3):
         for j in range(box_x * 3, box_x * 3 + 3):
             if board[i][j] == num and (i, j) != pos:
                 return False
     return True
 
-def find_empty(board):
-    for i in range(len(board)):
-        for j in range(len(board[0])):
-            if board[i][j] == 0:
-                return (i, j)
-    return None
+def get_possible_values(board, row, col):
+    """Повертає набір можливих значень для клітинки."""
+    if board[row][col] != 0:
+        return set()
+    
+    possible = set(range(1, 10))
+    # Row and column
+    for i in range(9):
+        possible.discard(board[row][i])
+        possible.discard(board[i][col])
+
+    # 3x3 box
+    box_row_start, box_col_start = 3 * (row // 3), 3 * (col // 3)
+    for i in range(box_row_start, box_row_start + 3):
+        for j in range(box_col_start, box_col_start + 3):
+            possible.discard(board[i][j])
+    return possible
+
+class SudokuSolver:
+    def __init__(self, board):
+        self.board = [row[:] for row in board]
+
+    def solve(self):
+        if not self.initial_propagation():
+            return False
+        return self.solve_recursive()
+
+    def initial_propagation(self):
+        #Forward checking
+        stalled = False
+        while not stalled:
+            stalled = True
+            for r in range(9):
+                for c in range(9):
+                    if self.board[r][c] == 0:
+                        possible = get_possible_values(self.board, r, c)
+                        if not possible:
+                            return False # Конфлікт
+                        if len(possible) == 1:
+                            val = possible.pop()
+                            self.board[r][c] = val
+                            stalled = False
+        return True
+
+    def find_best_empty_cell_mrv(self):
+        #Minimum remaining values (MRV)
+        min_len = 10
+        best_cell = None
+        for r in range(9):
+            for c in range(9):
+                if self.board[r][c] == 0:
+                    num_possible = len(get_possible_values(self.board, r, c))
+                    if num_possible < min_len:
+                        min_len = num_possible
+                        best_cell = (r, c)
+        return best_cell
+
+    def get_lcv_ordered_values(self, row, col):
+        #Least constraining values (LCV)
+        possible_values = get_possible_values(self.board, row, col)
+        
+        def count_constraints(val):
+            constraints = 0
+            # Row
+            for c in range(9):
+                if self.board[row][c] == 0 and val in get_possible_values(self.board, row, c):
+                    constraints += 1
+            # Column
+            for r in range(9):
+                if self.board[r][col] == 0 and val in get_possible_values(self.board, r, col):
+                    constraints += 1
+            # Box
+            box_row_start, box_col_start = 3 * (row // 3), 3 * (col // 3)
+            for r in range(box_row_start, box_row_start + 3):
+                for c in range(box_col_start, box_col_start + 3):
+                     if self.board[r][c] == 0 and val in get_possible_values(self.board, r, c):
+                        constraints += 1
+            return constraints
+            
+        return sorted(list(possible_values), key=count_constraints)
+
+    def solve_recursive(self):
+        cell = self.find_best_empty_cell_mrv()
+        if not cell:
+            return True
+        
+        row, col = cell
+        
+        ordered_values = self.get_lcv_ordered_values(row, col)
+
+        for val in ordered_values:
+            if is_valid(self.board, val, (row, col)):
+                self.board[row][col] = val
+                if self.solve_recursive():
+                    return True
+                self.board[row][col] = 0 # Backtrack
+        
+        return False
 
 if __name__ == "__main__":
     main_window = tk.Tk()
